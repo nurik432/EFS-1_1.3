@@ -208,7 +208,7 @@ const CompareTables = () => {
 
   return (
     <div className="container py-4">
-      <h1 className="mb-4">Сравнение Реестра и Полного свода</h1>
+      <h1 className="mb-4">Сравнение Проверки расчетов НДФЛ и Полного свода</h1>
 
       {error && (
         <div className="alert alert-danger mb-4" role="alert">
