@@ -221,20 +221,20 @@ const CompareTables = () => {
           className="btn btn-outline-secondary mb-2"
           onClick={handleVersionChange}
         >
-          Переключить на {isVersionTwo ? 'Версия 1 (Реестр: ФИО + 8 колонок, Сумма в 9-й)' : 'Версия 2 (Реестр: ФИО в 1-й, Сумма в 8-й колонке)'}
+          Переключить на {isVersionTwo ? 'Версия 1 (Проверка исчисленного налога)' : 'Версия 2 (Проверка дохода)'}
         </button>
       </div>
 
       <div className="row mb-4">
         <div className="col-md-6">
           <div className="form-group">
-            <label className="mb-2">Реестр:</label>
+            <label className="mb-2">Проверка расчетов НДФЛ:</label>
             <div className="d-flex mb-2">
               <button
                 className="btn btn-outline-secondary btn-sm me-2"
                 onClick={clearRegistry}
               >
-                Очистить реестр
+                Очистить Проверку расчетов НДФЛ
               </button>
             </div>
             <textarea
