@@ -1,0 +1,8 @@
+[build]
+  command = "npm run build"
+  publish = "out"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # В проекте есть старый конфликт peer-зависимостей (eslint 9 и eslint-config-next 13)
+  NPM_FLAGS = "--legacy-peer-deps"
