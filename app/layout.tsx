@@ -25,7 +25,7 @@ export default function RootLayout({
         <link
           href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           rel="stylesheet"
-          integrity="sha384-ENjdO4Dr2bkBIFxQpeo3lW5p1rjWQ0nPEz7p3Hq+FfNvZ9FQ3C1UwP24uJb9a7yB"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
           crossOrigin="anonymous"
         />
       </head>
