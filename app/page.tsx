@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { compareData, filterRows, sumDifferences } from '../lib/compare';
+import { compareData, filterRows, STATUS_TERMINATED, sumDifferences } from '../lib/compare';
 import type { ComparisonResult } from '../lib/compare';
 
 interface Submitted {
@@ -221,7 +221,7 @@ const CompareTables = () => {
           className="btn btn-outline-secondary mb-2"
           onClick={handleVersionChange}
         >
-          Переключить на {isVersionTwo ? 'Версия 1 (Реестр: ФИО + 8 колонок, Сумма в 9-й)' : 'Версия 2 (Реестр: ФИО в 1-й, Сумма в 8-й колонке)'}
+          Переключить на {isVersionTwo ? 'версию с 3 колонками' : 'версию с 2 колонками'}
         </button>
       </div>
 
@@ -240,12 +240,12 @@ const CompareTables = () => {
             <textarea
               className="form-control"
               rows={6}
-              placeholder={`Вставьте текст Реестра (${isVersionTwo ? 'ФИО[Tab]...[Tab]Сумма (всего от 8 колонок, ФИО - 1-я, Сумма - 8-я)' : 'ФИО[Tab]...[Tab]Сумма (всего 9 колонок, ФИО - 1-я, Сумма - 9-я)'})`}
+              placeholder={`Вставьте текст Реестра (${isVersionTwo ? 'ФИО[Tab]Сумма' : 'ФИО[Tab]СНИЛС[Tab]Сумма'})`}
               value={registryText}
               onChange={(e) => setRegistryText(e.target.value)}
             />
             <small className="form-text text-muted">
-              Формат: {isVersionTwo ? 'Для версии 2: ФИО - 1-я колонка, Сумма - 8-я колонка. Минимум 8 колонок.' : 'Для версии 1: ФИО - 1-я колонка, Сумма - 9-я колонка. Всего 9 колонок.'}
+              Формат: {isVersionTwo ? 'ФИО[Tab]Сумма (при дублирующихся ФИО суммы складываются)' : 'ФИО[Tab]СНИЛС[Tab]Сумма'}
             </small>
           </div>
         </div>
@@ -322,7 +322,7 @@ const CompareTables = () => {
           className="btn btn-danger mb-2"
           onClick={() => setFilterTerminated(!filterTerminated)}
         >
-          {filterTerminated ? 'Показать отсутствующие' : 'Скрыть отсутствующие'}
+          {filterTerminated ? 'Показать уволенных' : 'Скрыть уволенных'}
         </button>
       </div>
 
@@ -340,7 +340,7 @@ const CompareTables = () => {
               {visibleRows.map((row, index) => (
                 <tr
                   key={index}
-                  className={row.Статус === 'Нет в Реестре' || row.Статус === 'Нет в Своде' ? 'table-danger' : row.Разница === 0 ? 'table-success' : 'table-warning'}
+                  className={row.Статус === STATUS_TERMINATED ? 'table-danger' : row.Разница === 0 ? 'table-success' : 'table-warning'}
                 >
                   <td>
                     <input

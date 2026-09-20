@@ -3,7 +3,9 @@ export interface DataRow {
   СУММА: number;
 }
 
-export type Status = 'Совпадает' | 'Различается' | 'Нет в Реестре' | 'Нет в Своде';
+export const STATUS_TERMINATED = 'Уволен или работает по ГПХ';
+
+export type Status = 'Совпадает' | 'Различается' | typeof STATUS_TERMINATED;
 
 export interface ComparisonResult {
   ФИО: string;
@@ -21,6 +23,10 @@ export const cleanFIO = (fio: string): string => fio.replace(/\s+/g, ' ').trim()
 // Ключ для сопоставления: без учёта регистра, «ё» = «е», лишние пробелы схлопнуты
 export const fioKey = (fio: string): string =>
   cleanFIO(fio).toLowerCase().replace(/ё/g, 'е');
+
+// Предполагаем, что ФИО — это первые три слова (Фамилия Имя Отчество)
+export const extractFIO = (text: string): string =>
+  cleanFIO(text.trim().split(/\s+/).slice(0, 3).join(' '));
 
 export const parseSum = (sumString: string, where: string): number => {
   if (!sumString) {
@@ -41,26 +47,21 @@ const nonEmptyLines = (text: string): { line: string; number: number }[] =>
     .map((line, index) => ({ line, number: index + 1 }))
     .filter(({ line }) => line.trim() !== '');
 
+// Реестр для кадров.
+// Режим «3 колонки» (isVersionTwo = false): ФИО[Tab]СНИЛС[Tab]Сумма.
+// Режим «2 колонки» (isVersionTwo = true): ФИО[Tab]Сумма; ФИО берётся как первые три слова,
+// суммы одинаковых ФИО складываются.
 export const parseRegistryText = (text: string, isVersionTwo: boolean): DataRow[] => {
+  const columns = isVersionTwo ? 2 : 3;
+
   const rows = nonEmptyLines(text).map(({ line, number }) => {
     const parts = line.split('\t');
-    if (!isVersionTwo) {
-      // Версия 1: ровно 9 колонок, ФИО — 1-я, Сумма — 9-я
-      if (parts.length !== 9) {
-        throw new Error(`Ошибка в строке ${number} реестра: неверный формат данных для версии 1. Ожидается 9 колонок.`);
-      }
-      return {
-        ФИО: cleanFIO(parts[0]),
-        СУММА: parseSum(parts[8].trim(), `строке ${number} реестра`),
-      };
-    }
-    // Версия 2: минимум 8 колонок, ФИО — 1-я, Сумма — 8-я
-    if (parts.length < 8) {
-      throw new Error(`Ошибка в строке ${number} реестра: неверный формат данных для версии 2. Ожидается минимум 8 колонок.`);
+    if (parts.length !== columns) {
+      throw new Error(`Ошибка в строке ${number} реестра: неверный формат данных. Ожидаются ${columns} колонки.`);
     }
     return {
-      ФИО: cleanFIO(parts[0]),
-      СУММА: parseSum(parts[7].trim(), `строке ${number} реестра`),
+      ФИО: isVersionTwo ? extractFIO(parts[0]) : cleanFIO(parts[0]),
+      СУММА: parseSum(parts[columns - 1].trim(), `строке ${number} реестра`),
     };
   });
 
@@ -68,7 +69,6 @@ export const parseRegistryText = (text: string, isVersionTwo: boolean): DataRow[
     return rows;
   }
 
-  // В версии 2 суммы одинаковых ФИО складываются
   const merged = new Map<string, DataRow>();
   rows.forEach((row) => {
     const key = fioKey(row.ФИО);
@@ -107,43 +107,31 @@ export const compareData = (
   const registry = parseRegistryText(registryText, isVersionTwo);
   const fullReport = parseFullReportText(fullReportText);
 
-  // При повторяющихся ФИО в реестре побеждает последняя строка
+  // При повторяющихся ФИО в реестре (режим «3 колонки») побеждает последняя строка
   const registryMap = new Map<string, number>();
   registry.forEach((row) => registryMap.set(fioKey(row.ФИО), row.СУММА));
 
-  const reportKeys = new Set<string>();
-  const results: ComparisonResult[] = [];
-
-  fullReport.forEach((row) => {
-    const key = fioKey(row.ФИО);
-    reportKeys.add(key);
-    const sumRegistry = registryMap.get(key);
+  // Идём по своду: кого нет в реестре — уволен или работает по ГПХ.
+  // Обратной проверки (есть в реестре, нет в своде) в кадровой версии нет.
+  return fullReport.map((row): ComparisonResult => {
+    const sumRegistry = registryMap.get(fioKey(row.ФИО));
 
     if (sumRegistry === undefined) {
-      results.push({ ФИО: row.ФИО, Разница: row.СУММА, Статус: 'Нет в Реестре' });
-    } else {
-      results.push({
-        ФИО: row.ФИО,
-        Разница: row.СУММА - sumRegistry,
-        Статус: row.СУММА === sumRegistry ? 'Совпадает' : 'Различается',
-      });
+      return { ФИО: row.ФИО, Разница: row.СУММА, Статус: STATUS_TERMINATED };
     }
+    return {
+      ФИО: row.ФИО,
+      Разница: row.СУММА - sumRegistry,
+      Статус: row.СУММА === sumRegistry ? 'Совпадает' : 'Различается',
+    };
   });
-
-  registry.forEach((row) => {
-    if (!reportKeys.has(fioKey(row.ФИО))) {
-      results.push({ ФИО: row.ФИО, Разница: -row.СУММА, Статус: 'Нет в Своде' });
-    }
-  });
-
-  return results;
 };
 
 export const filterRows = (rows: ComparisonResult[], { hideMatches, hideMissing }: Filters): ComparisonResult[] =>
   rows.filter(
     (row) =>
       (!hideMatches || row.Статус !== 'Совпадает') &&
-      (!hideMissing || (row.Статус !== 'Нет в Реестре' && row.Статус !== 'Нет в Своде')),
+      (!hideMissing || row.Статус !== STATUS_TERMINATED),
   );
 
 export const sumDifferences = (rows: ComparisonResult[]): string =>
