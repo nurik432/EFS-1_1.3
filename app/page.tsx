@@ -28,6 +28,10 @@ const EMPTY: Comparison = { differences: [], compareError: '', elapsedMs: 0 };
 const ROW_HEIGHT = 28;
 const OVERSCAN = 10;
 
+// Раскладка огромного текста в textarea занимает ~0,7 с на каждый мегабайт,
+// поэтому при больших данных поля ввода сворачиваются
+const LARGE_INPUT_CHARS = 300_000;
+
 const STORAGE_WARNING =
   'Данные слишком велики для сохранения в браузере: после перезагрузки страницы они пропадут. Сравнение и экспорт работают как обычно.';
 
@@ -174,6 +178,10 @@ const CompareTables = () => {
     if (savedIsVersionTwo) setIsVersionTwo(savedIsVersionTwo === 'true');
     setModifiedAt(savedModifiedAt ? Number(savedModifiedAt) : null);
 
+    if ((savedRegistryText?.length ?? 0) + (savedFullReportText?.length ?? 0) > LARGE_INPUT_CHARS) {
+      setInputsOpen(false);
+    }
+
     // Если есть сохраненные данные, автоматически запускаем сравнение
     if (savedRegistryText && savedFullReportText) {
       setSubmitted({
@@ -200,6 +208,15 @@ const CompareTables = () => {
     for (const [key, value] of entries) {
       ok = trySetItem(getStorageKey(key), value) && ok;
     }
+    if (!ok) {
+      // Не оставляем половину данных: после перезагрузки лучше пустые поля, чем реестр без свода
+      try {
+        localStorage.removeItem(getStorageKey('registryText'));
+        localStorage.removeItem(getStorageKey('fullReportText'));
+      } catch {
+        // хранилище недоступно
+      }
+    }
     setStorageWarning(!ok);
   }, [registryText, fullReportText, filterMatches, filterTerminated, sessionId, isVersionTwo]);
 
@@ -218,6 +235,9 @@ const CompareTables = () => {
       return;
     }
     setSubmitted({ registryText, fullReportText, isVersionTwo, at: Date.now() });
+    if (registryText.length + fullReportText.length > LARGE_INPUT_CHARS) {
+      setInputsOpen(false);
+    }
   };
 
   // Обработчик изменения версии
@@ -316,6 +336,13 @@ const CompareTables = () => {
   };
 
   const canCompare = registryText.trim() !== '' && fullReportText.trim() !== '';
+
+  // Сколько строк во вставленных данных: показываем, пока поля ввода свёрнуты
+  const inputLines = useMemo(() => {
+    if (inputsOpen) return null;
+    const count = (text: string) => (text.trim() === '' ? 0 : text.trim().split('\n').length);
+    return { registry: count(registryText), report: count(fullReportText) };
+  }, [inputsOpen, registryText, fullReportText]);
   const total = differences.length;
   const selectOnClick = (e: React.MouseEvent<HTMLInputElement>) => e.currentTarget.select();
 
@@ -397,6 +424,15 @@ const CompareTables = () => {
               <div className="note" role="status">
                 <span className="sq" />
                 <div>{STORAGE_WARNING}</div>
+              </div>
+            )}
+            {inputLines && (
+              <div className="note">
+                <span className="sq" />
+                <div>
+                  Поля ввода свёрнуты. {variant.registryTitle}: {inputLines.registry} строк, Полный свод: {inputLines.report} строк.
+                  Нажмите «Показать ввод», чтобы изменить данные.
+                </div>
               </div>
             )}
             {inputsOpen && (
