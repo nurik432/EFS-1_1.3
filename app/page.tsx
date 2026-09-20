@@ -2,14 +2,25 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { compareData, filterRows, STATUS_TERMINATED, sumDifferences } from '../lib/compare';
+import { compareData, filterRows, sumDifferences } from '../lib/compare';
 import type { ComparisonResult } from '../lib/compare';
+import { formatAmount, formatDateTime, formatElapsed, formatTime } from '../lib/format';
+import { statusTone, variant } from './variant';
 
 interface Submitted {
   registryText: string;
   fullReportText: string;
   isVersionTwo: boolean;
+  at: number;
 }
+
+interface Comparison {
+  differences: ComparisonResult[];
+  compareError: string;
+  elapsedMs: number;
+}
+
+const EMPTY: Comparison = { differences: [], compareError: '', elapsedMs: 0 };
 
 const newSessionKey = () => 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
 
@@ -20,23 +31,24 @@ const CompareTables = () => {
   const [filterMatches, setFilterMatches] = useState<boolean>(false);
   const [filterTerminated, setFilterTerminated] = useState<boolean>(false);
   const [sessionId, setSessionId] = useState<string>('');
-  const [isVersionTwo, setIsVersionTwo] = useState<boolean>(false); // false = версия 1 (9 колонок реестра), true = версия 2 (сумма в 8-й колонке)
+  const [modifiedAt, setModifiedAt] = useState<number | null>(null);
+  const [isVersionTwo, setIsVersionTwo] = useState<boolean>(false); // false = версия 1, true = версия 2
   // Снимок данных на момент нажатия «Сравнить данные»; результат считается из него
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
 
-  const { differences, compareError } = useMemo((): { differences: ComparisonResult[]; compareError: string } => {
+  const { differences, compareError, elapsedMs } = useMemo((): Comparison => {
     if (!submitted) {
-      return { differences: [], compareError: '' };
+      return EMPTY;
     }
+    const start = performance.now();
     try {
-      return {
-        differences: compareData(submitted.registryText, submitted.fullReportText, submitted.isVersionTwo),
-        compareError: '',
-      };
+      const rows = compareData(submitted.registryText, submitted.fullReportText, submitted.isVersionTwo);
+      return { differences: rows, compareError: '', elapsedMs: performance.now() - start };
     } catch (e) {
       return {
         differences: [],
         compareError: e instanceof Error ? e.message : 'Произошла ошибка при сравнении данных',
+        elapsedMs: 0,
       };
     }
   }, [submitted]);
@@ -46,6 +58,15 @@ const CompareTables = () => {
   const visibleRows = useMemo(
     () => filterRows(differences, { hideMatches: filterMatches, hideMissing: filterTerminated }),
     [differences, filterMatches, filterTerminated],
+  );
+
+  const stats = useMemo(
+    () =>
+      variant.statCards.map((card) => ({
+        ...card,
+        count: differences.filter((row) => card.statuses.includes(row.Статус)).length,
+      })),
+    [differences],
   );
 
   // Генерация уникального ID сессии при первой загрузке
@@ -74,6 +95,7 @@ const CompareTables = () => {
     const savedFilterMatches = localStorage.getItem(getStorageKey('filterMatches'));
     const savedFilterTerminated = localStorage.getItem(getStorageKey('filterTerminated'));
     const savedIsVersionTwo = localStorage.getItem(getStorageKey('isVersionTwo'));
+    const savedModifiedAt = localStorage.getItem(getStorageKey('modifiedAt'));
 
     // Результаты сравнения больше не хранятся, они пересчитываются из данных
     localStorage.removeItem(getStorageKey('differences'));
@@ -83,6 +105,7 @@ const CompareTables = () => {
     if (savedFilterMatches) setFilterMatches(savedFilterMatches === 'true');
     if (savedFilterTerminated) setFilterTerminated(savedFilterTerminated === 'true');
     if (savedIsVersionTwo) setIsVersionTwo(savedIsVersionTwo === 'true');
+    setModifiedAt(savedModifiedAt ? Number(savedModifiedAt) : null);
 
     // Если есть сохраненные данные, автоматически запускаем сравнение
     if (savedRegistryText && savedFullReportText) {
@@ -90,6 +113,7 @@ const CompareTables = () => {
         registryText: savedRegistryText,
         fullReportText: savedFullReportText,
         isVersionTwo: savedIsVersionTwo === 'true',
+        at: Date.now(),
       });
     }
   }, [sessionId]);
@@ -105,6 +129,13 @@ const CompareTables = () => {
     localStorage.setItem(getStorageKey('isVersionTwo'), String(isVersionTwo));
   }, [registryText, fullReportText, filterMatches, filterTerminated, sessionId, isVersionTwo]);
 
+  // Время последнего изменения данных в сессии
+  const touch = () => {
+    const now = Date.now();
+    setModifiedAt(now);
+    if (sessionId) localStorage.setItem(getStorageKey('modifiedAt'), String(now));
+  };
+
   const runCompare = () => {
     setActionError('');
     if (!registryText.trim() || !fullReportText.trim()) {
@@ -112,7 +143,7 @@ const CompareTables = () => {
       setActionError('Пожалуйста, заполните оба поля данных');
       return;
     }
-    setSubmitted({ registryText, fullReportText, isVersionTwo });
+    setSubmitted({ registryText, fullReportText, isVersionTwo, at: Date.now() });
   };
 
   // Обработчик изменения версии
@@ -123,7 +154,7 @@ const CompareTables = () => {
 
     // Результаты сбрасываем и, если данные есть, сразу пересчитываем по новой версии
     if (registryText.trim() && fullReportText.trim()) {
-      setSubmitted({ registryText, fullReportText, isVersionTwo: next });
+      setSubmitted({ registryText, fullReportText, isVersionTwo: next, at: Date.now() });
     } else {
       setSubmitted(null);
     }
@@ -133,6 +164,7 @@ const CompareTables = () => {
   const clearRegistry = () => {
     setRegistryText('');
     localStorage.removeItem(getStorageKey('registryText'));
+    touch();
     if (!fullReportText.trim()) {
       setSubmitted(null);
     }
@@ -142,6 +174,7 @@ const CompareTables = () => {
   const clearFullReport = () => {
     setFullReportText('');
     localStorage.removeItem(getStorageKey('fullReportText'));
+    touch();
     if (!registryText.trim()) {
       setSubmitted(null);
     }
@@ -206,185 +239,237 @@ const CompareTables = () => {
     }
   };
 
+  const canCompare = registryText.trim() !== '' && fullReportText.trim() !== '';
+  const total = differences.length;
+  const selectOnClick = (e: React.MouseEvent<HTMLInputElement>) => e.currentTarget.select();
+
   return (
-    <div className="container py-4">
-      <h1 className="mb-4">Сравнение Реестра и Полного свода</h1>
-
-      {error && (
-        <div className="alert alert-danger mb-4" role="alert">
-          {error}
-        </div>
-      )}
-
-      <div className="mb-4">
-        <button
-          className="btn btn-outline-secondary mb-2"
-          onClick={handleVersionChange}
-        >
-          Переключить на {isVersionTwo ? 'версию с 3 колонками' : 'версию с 2 колонками'}
-        </button>
-      </div>
-
-      <div className="row mb-4">
-        <div className="col-md-6">
-          <div className="form-group">
-            <label className="mb-2">Реестр:</label>
-            <div className="d-flex mb-2">
-              <button
-                className="btn btn-outline-secondary btn-sm me-2"
-                onClick={clearRegistry}
-              >
-                Очистить реестр
-              </button>
-            </div>
-            <textarea
-              className="form-control"
-              rows={6}
-              placeholder={`Вставьте текст Реестра (${isVersionTwo ? 'ФИО[Tab]Сумма' : 'ФИО[Tab]СНИЛС[Tab]Сумма'})`}
-              value={registryText}
-              onChange={(e) => setRegistryText(e.target.value)}
-            />
-            <small className="form-text text-muted">
-              Формат: {isVersionTwo ? 'ФИО[Tab]Сумма (при дублирующихся ФИО суммы складываются)' : 'ФИО[Tab]СНИЛС[Tab]Сумма'}
-            </small>
+    <div className="desk">
+      <div className="win">
+        <div className="titlebar">
+          <div className="titlebar-icon" aria-hidden="true" />
+          <h1>{variant.windowTitle}</h1>
+          <div className="spacer" />
+          <div className="winctl" aria-hidden="true">
+            <span className="min"><i /></span>
+            <span className="max"><i /></span>
+            <span className="close">✕</span>
           </div>
         </div>
 
-        <div className="col-md-6">
-          <div className="form-group">
-            <label className="mb-2">Полный свод:</label>
-            <div className="d-flex mb-2">
-              <button
-                className="btn btn-outline-secondary btn-sm me-2"
-                onClick={clearFullReport}
-              >
-                Очистить полный свод
-              </button>
-            </div>
-            <textarea
-              className="form-control"
-              rows={6}
-              placeholder="Вставьте текст Полного свода (ФИО[Tab]Сумма)"
-              value={fullReportText}
-              onChange={(e) => setFullReportText(e.target.value)}
-            />
-            <small className="form-text text-muted">
-              Формат: ФИО[Tab]Сумма
-            </small>
-          </div>
+        <div className="menubar" aria-hidden="true">
+          <span>Файл</span><span>Правка</span><span>Действия</span><span>Сервис</span><span>Справка</span>
         </div>
-      </div>
 
-      <div className="mb-4 d-flex flex-wrap">
-        <button
-          className="btn btn-primary me-2 mb-2"
-          onClick={runCompare}
-          disabled={!registryText.trim() || !fullReportText.trim()}
-        >
-          Сравнить данные
-        </button>
+        <div className="toolbar" role="toolbar" aria-label="Действия">
+          <button className="btn" onClick={runCompare} disabled={!canCompare}>
+            <span className="sq green" />Сравнить данные
+          </button>
+          <button
+            className="btn"
+            onClick={exportToExcel}
+            disabled={differences.length === 0}
+            title="Сохранить результаты в Excel файл"
+          >
+            <span className="sq lime" />Экспорт в Excel
+          </button>
+          <div className="tb-sep" />
+          <button className="btn" onClick={clearAll}>
+            <span className="sq red" />Очистить всё
+          </button>
+          <button
+            className="btn"
+            onClick={createNewSession}
+            title="Создать новую сессию для работы с другими данными"
+          >
+            <span className="sq blue" />Новая сессия
+          </button>
+          <div className="tb-sep" />
+          <button
+            className="btn pressed"
+            onClick={handleVersionChange}
+            title={`Переключить на ${variant.modeLabel(!isVersionTwo)}`}
+          >
+            <span className="sq" />Режим: {variant.modeLabel(isVersionTwo)}
+          </button>
+        </div>
 
-        <button
-          className="btn btn-outline-danger me-2 mb-2"
-          onClick={clearAll}
-        >
-          Очистить все
-        </button>
+        <div className="body">
+          <nav className="sidebar" aria-label="Разделы">
+            <div className="side-title">Разделы</div>
+            <div className="side-item active" aria-current="page"><span className="sq" />Сравнение сумм</div>
+            <div className="side-item"><span className="sq" />{variant.registrySection}</div>
+            <div className="side-item"><span className="sq" />Полный свод</div>
+            <div className="side-item"><span className="sq" />Сотрудники</div>
+            <div className="side-item"><span className="sq" />Отчёты</div>
+            <div className="side-sep" />
+            <div className="side-item"><span className="sq" />Настройки</div>
+            <div className="session">
+              Сессия<br /><b>{sessionId || '—'}</b>
+              {modifiedAt !== null && <><br />изменена {formatTime(modifiedAt)}</>}
+            </div>
+          </nav>
 
-        <button
-          className="btn btn-outline-info me-2 mb-2"
-          onClick={createNewSession}
-          title="Создать новую сессию для работы с другими данными"
-        >
-          Новая сессия
-        </button>
+          <main className="content">
+            {error ? (
+              <div className="note error" role="alert">
+                <span className="sq" />
+                <div>{error}</div>
+              </div>
+            ) : (
+              <div className="note">
+                <span className="sq" />
+                <div>
+                  Данные вставляются из буфера обмена. Разделитель колонок — табуляция.
+                  {variant.sumsDuplicates(isVersionTwo) && ' При совпадении ФИО в реестре суммы складываются.'}
+                </div>
+              </div>
+            )}
 
-        {/* Новая кнопка для экспорта в Excel */}
-        <button
-          className="btn btn-success mb-2"
-          onClick={exportToExcel}
-          disabled={differences.length === 0}
-          title="Сохранить результаты в Excel файл"
-        >
-          <i className="bi bi-file-earmark-excel me-1"></i>
-          Экспорт в Excel
-        </button>
-      </div>
+            <div className="panels">
+              <section className="panel" aria-labelledby="registry-title">
+                <div className="panel-head">
+                  <b id="registry-title">{variant.registryTitle}</b>
+                  <button className="btn small" onClick={clearRegistry} title={variant.clearRegistryTitle}>Очистить</button>
+                </div>
+                <div className="panel-body">
+                  <textarea
+                    rows={8}
+                    aria-labelledby="registry-title"
+                    placeholder={variant.registryPlaceholder(isVersionTwo)}
+                    value={registryText}
+                    onChange={(e) => { setRegistryText(e.target.value); touch(); }}
+                  />
+                  <div className="hint">Формат: {variant.registryFormat(isVersionTwo)}</div>
+                </div>
+              </section>
 
-      <div className="mb-4">
-        <button
-          className="btn btn-secondary me-2 mb-2"
-          onClick={() => setFilterMatches(!filterMatches)}
-        >
-          {filterMatches ? 'Показать совпадения' : 'Скрыть совпадения'}
-        </button>
-        <button
-          className="btn btn-danger mb-2"
-          onClick={() => setFilterTerminated(!filterTerminated)}
-        >
-          {filterTerminated ? 'Показать уволенных' : 'Скрыть уволенных'}
-        </button>
-      </div>
+              <section className="panel" aria-labelledby="report-title">
+                <div className="panel-head">
+                  <b id="report-title">Полный свод</b>
+                  <button className="btn small" onClick={clearFullReport}>Очистить</button>
+                </div>
+                <div className="panel-body">
+                  <textarea
+                    rows={8}
+                    aria-labelledby="report-title"
+                    placeholder="Вставьте текст Полного свода (ФИО[Tab]Сумма)"
+                    value={fullReportText}
+                    onChange={(e) => { setFullReportText(e.target.value); touch(); }}
+                  />
+                  <div className="hint">Формат: ФИО [Tab] Сумма</div>
+                </div>
+              </section>
+            </div>
 
-      {differences.length > 0 && (
-        <div className="table-responsive">
-          <table className="table table-striped table-bordered">
-            <thead className="table-dark">
-              <tr>
-                <th>ФИО</th>
-                <th>Разница</th>
-                <th>Статус</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row, index) => (
-                <tr
-                  key={index}
-                  className={row.Статус === STATUS_TERMINATED ? 'table-danger' : row.Разница === 0 ? 'table-success' : 'table-warning'}
-                >
-                  <td>
-                    <input
-                      type="text"
-                      value={row.ФИО}
-                      readOnly
-                      className="form-control"
-                      onClick={(e) => (e.target as HTMLInputElement).select()}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="text"
-                      value={row.Разница.toFixed(2)}
-                      readOnly
-                      className="form-control"
-                      onClick={(e) => (e.target as HTMLInputElement).select()}
-                    />
-                  </td>
-                  <td>{row.Статус}</td>
-                </tr>
+            <div className="progress">
+              <span className="progress-label">Сравнение:</span>
+              <div className="progress-bar" role="presentation">
+                <div className={`progress-fill${total > 0 ? '' : ' empty'}`} />
+              </div>
+              <span className="progress-text">
+                {total > 0 ? `${total} из ${total} записей · ${formatElapsed(elapsedMs)}` : 'нет данных'}
+              </span>
+            </div>
+
+            <div className="stats">
+              {stats.map((card) => (
+                <div className="stat" key={card.label}>
+                  <div className="stat-label">{card.label}</div>
+                  <div className={`stat-value tone-${card.tone}`}>{card.count}</div>
+                </div>
               ))}
-            </tbody>
-            <tfoot>
-              <tr className="table-info">
-                <td>
-                  <strong>Всего записей:</strong>
-                </td>
-                <td colSpan={2}>
-                  {visibleRows.length}
-                </td>
-              </tr>
-              <tr className="table-danger">
-                <td>
-                  <strong>Итоговая сумма разницы:</strong>
-                </td>
-                <td colSpan={2}>
-                  {sumDifferences(visibleRows)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+              <div className="stat">
+                <div className="stat-label">Сумма разницы</div>
+                <div className="stat-value">{formatAmount(parseFloat(sumDifferences(differences)))}</div>
+              </div>
+            </div>
+
+            <div className="results-head">
+              <b>Результат сравнения</b>
+              <div className="spacer" />
+              <button
+                className="btn small"
+                aria-pressed={filterMatches}
+                onClick={() => setFilterMatches(!filterMatches)}
+              >
+                <span className={`sq${filterMatches ? ' checked' : ''}`} />
+                {filterMatches ? 'Показать совпадения' : 'Скрыть совпадения'}
+              </button>
+              <button
+                className="btn small"
+                aria-pressed={filterTerminated}
+                onClick={() => setFilterTerminated(!filterTerminated)}
+              >
+                <span className={`sq${filterTerminated ? ' checked' : ''}`} />
+                {filterTerminated ? 'Показать' : 'Скрыть'} {variant.missingNoun}
+              </button>
+            </div>
+
+            <div className="table-wrap">
+              <table className="grid">
+                <colgroup>
+                  <col />
+                  <col className="c-num" />
+                  <col className="c-status" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>ФИО</th>
+                    <th className="num">Разница</th>
+                    <th>Статус</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRows.length === 0 && (
+                    <tr className="empty-row">
+                      <td colSpan={3}>
+                        {total === 0
+                          ? 'Нет данных. Вставьте данные в оба поля и нажмите «Сравнить данные».'
+                          : 'Все записи скрыты фильтрами.'}
+                      </td>
+                    </tr>
+                  )}
+                  {visibleRows.map((row, index) => {
+                    const tone = statusTone(row.Статус);
+                    return (
+                      <tr key={index} className={`row-${tone}`}>
+                        <td>
+                          <input type="text" className="cell" value={row.ФИО} readOnly aria-label="ФИО" onClick={selectOnClick} />
+                        </td>
+                        <td>
+                          <input type="text" className="cell num" value={formatAmount(row.Разница)} readOnly aria-label="Разница" onClick={selectOnClick} />
+                        </td>
+                        <td className={`status tone-${tone}`}>{row.Статус}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {total > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td><b>Всего записей:</b></td>
+                      <td colSpan={2}>{visibleRows.length}</td>
+                    </tr>
+                    <tr>
+                      <td><b>Итоговая сумма разницы:</b></td>
+                      <td colSpan={2}><b>{formatAmount(parseFloat(sumDifferences(visibleRows)))}</b></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </main>
         </div>
-      )}
+
+        <div className="statusbar">
+          <div>{submitted && total > 0 ? `Сравнение выполнено: ${formatDateTime(submitted.at)}` : 'Сравнение не выполнено'}</div>
+          <div>Записей: {total}</div>
+          <div>Режим: {variant.modeLabel(isVersionTwo)}</div>
+          <div className="spacer" />
+          <div className="last">{variant.footerTag}</div>
+        </div>
+      </div>
     </div>
   );
 };
