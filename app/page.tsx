@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { compareData, filterRows, sumDifferences } from '../lib/compare';
 import type { ComparisonResult } from '../lib/compare';
 import { formatAmount, formatDateTime, formatElapsed, formatTime } from '../lib/format';
+import { nextSort, searchRows, sortRows } from '../lib/view';
+import type { Sort, SortKey } from '../lib/view';
 import { statusTone, variant } from './variant';
 
 interface Submitted {
@@ -22,19 +24,60 @@ interface Comparison {
 
 const EMPTY: Comparison = { differences: [], compareError: '', elapsedMs: 0 };
 
+// Таблица рисует только видимые строки, поэтому высота строки фиксирована (см. .grid td в globals.css)
+const ROW_HEIGHT = 28;
+const OVERSCAN = 10;
+
+// Раскладка огромного текста в textarea занимает ~0,7 с на каждый мегабайт,
+// поэтому при больших данных поля ввода сворачиваются
+const LARGE_INPUT_CHARS = 300_000;
+
+const STORAGE_WARNING =
+  'Данные слишком велики для сохранения в браузере: после перезагрузки страницы они пропадут. Сравнение и экспорт работают как обычно.';
+
 const newSessionKey = () => 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
+
+// Квота localStorage небольшая, а вставленный реестр может быть огромным
+const trySetItem = (key: string, value: string): boolean => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    // Иначе после перезагрузки вернётся устаревшее значение
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // хранилище недоступно — ничего не поделать
+    }
+    return false;
+  }
+};
+
+const SORTABLE: { key: SortKey; label: string; className?: string }[] = [
+  { key: 'ФИО', label: 'ФИО' },
+  { key: 'Разница', label: 'Разница', className: 'num' },
+  { key: 'Статус', label: 'Статус' },
+];
 
 const CompareTables = () => {
   const [registryText, setRegistryText] = useState<string>('');
   const [fullReportText, setFullReportText] = useState<string>('');
   const [actionError, setActionError] = useState<string>('');
+  const [storageWarning, setStorageWarning] = useState<boolean>(false);
   const [filterMatches, setFilterMatches] = useState<boolean>(false);
   const [filterTerminated, setFilterTerminated] = useState<boolean>(false);
+  const [query, setQuery] = useState<string>('');
+  const [sort, setSort] = useState<Sort | null>(null);
+  const [inputsOpen, setInputsOpen] = useState<boolean>(true);
   const [sessionId, setSessionId] = useState<string>('');
   const [modifiedAt, setModifiedAt] = useState<number | null>(null);
   const [isVersionTwo, setIsVersionTwo] = useState<boolean>(false); // false = версия 1, true = версия 2
   // Снимок данных на момент нажатия «Сравнить данные»; результат считается из него
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
+
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [firstRow, setFirstRow] = useState<number>(0);
+  const [viewportRows, setViewportRows] = useState<number>(20);
 
   const { differences, compareError, elapsedMs } = useMemo((): Comparison => {
     if (!submitted) {
@@ -55,9 +98,14 @@ const CompareTables = () => {
 
   const error = compareError || actionError;
 
-  const visibleRows = useMemo(
-    () => filterRows(differences, { hideMatches: filterMatches, hideMissing: filterTerminated }),
-    [differences, filterMatches, filterTerminated],
+  // Строки, которые видит пользователь: фильтры → поиск → сортировка
+  const viewRows = useMemo(
+    () =>
+      sortRows(
+        searchRows(filterRows(differences, { hideMatches: filterMatches, hideMissing: filterTerminated }), query),
+        sort,
+      ),
+    [differences, filterMatches, filterTerminated, query, sort],
   );
 
   const stats = useMemo(
@@ -68,6 +116,29 @@ const CompareTables = () => {
       })),
     [differences],
   );
+
+  // Виртуальная прокрутка: в DOM только строки в окне просмотра и небольшой запас
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const update = () => setViewportRows(Math.ceil(el.clientHeight / ROW_HEIGHT));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // При смене набора строк возвращаемся к началу таблицы
+  useEffect(() => {
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
+    setFirstRow(0);
+  }, [differences, filterMatches, filterTerminated, query, sort]);
+
+  const rangeStart = Math.max(0, firstRow - OVERSCAN);
+  const rangeEnd = Math.min(viewRows.length, firstRow + viewportRows + OVERSCAN);
+  const shownRows = viewRows.slice(rangeStart, rangeEnd);
+  const spaceBefore = rangeStart * ROW_HEIGHT;
+  const spaceAfter = (viewRows.length - rangeEnd) * ROW_HEIGHT;
 
   // Генерация уникального ID сессии при первой загрузке
   useEffect(() => {
@@ -107,6 +178,10 @@ const CompareTables = () => {
     if (savedIsVersionTwo) setIsVersionTwo(savedIsVersionTwo === 'true');
     setModifiedAt(savedModifiedAt ? Number(savedModifiedAt) : null);
 
+    if ((savedRegistryText?.length ?? 0) + (savedFullReportText?.length ?? 0) > LARGE_INPUT_CHARS) {
+      setInputsOpen(false);
+    }
+
     // Если есть сохраненные данные, автоматически запускаем сравнение
     if (savedRegistryText && savedFullReportText) {
       setSubmitted({
@@ -122,18 +197,34 @@ const CompareTables = () => {
   useEffect(() => {
     if (!sessionId) return;
 
-    localStorage.setItem(getStorageKey('registryText'), registryText);
-    localStorage.setItem(getStorageKey('fullReportText'), fullReportText);
-    localStorage.setItem(getStorageKey('filterMatches'), String(filterMatches));
-    localStorage.setItem(getStorageKey('filterTerminated'), String(filterTerminated));
-    localStorage.setItem(getStorageKey('isVersionTwo'), String(isVersionTwo));
+    const entries: [string, string][] = [
+      ['registryText', registryText],
+      ['fullReportText', fullReportText],
+      ['filterMatches', String(filterMatches)],
+      ['filterTerminated', String(filterTerminated)],
+      ['isVersionTwo', String(isVersionTwo)],
+    ];
+    let ok = true;
+    for (const [key, value] of entries) {
+      ok = trySetItem(getStorageKey(key), value) && ok;
+    }
+    if (!ok) {
+      // Не оставляем половину данных: после перезагрузки лучше пустые поля, чем реестр без свода
+      try {
+        localStorage.removeItem(getStorageKey('registryText'));
+        localStorage.removeItem(getStorageKey('fullReportText'));
+      } catch {
+        // хранилище недоступно
+      }
+    }
+    setStorageWarning(!ok);
   }, [registryText, fullReportText, filterMatches, filterTerminated, sessionId, isVersionTwo]);
 
   // Время последнего изменения данных в сессии
   const touch = () => {
     const now = Date.now();
     setModifiedAt(now);
-    if (sessionId) localStorage.setItem(getStorageKey('modifiedAt'), String(now));
+    if (sessionId) trySetItem(getStorageKey('modifiedAt'), String(now));
   };
 
   const runCompare = () => {
@@ -144,6 +235,9 @@ const CompareTables = () => {
       return;
     }
     setSubmitted({ registryText, fullReportText, isVersionTwo, at: Date.now() });
+    if (registryText.length + fullReportText.length > LARGE_INPUT_CHARS) {
+      setInputsOpen(false);
+    }
   };
 
   // Обработчик изменения версии
@@ -186,6 +280,8 @@ const CompareTables = () => {
     setFullReportText('');
     setSubmitted(null);
     setActionError('');
+    setQuery('');
+    setSort(null);
     localStorage.removeItem(getStorageKey('registryText'));
     localStorage.removeItem(getStorageKey('fullReportText'));
   };
@@ -198,11 +294,11 @@ const CompareTables = () => {
     clearAll();
   };
 
-  // Функция для экспорта данных в Excel
+  // Функция для экспорта данных в Excel: то, что сейчас показано в таблице
   const exportToExcel = () => {
     try {
-      // Формируем данные для Excel из строк, видимых при текущих фильтрах
-      const excelData = visibleRows.map(row => ({
+      // Формируем данные для Excel из строк, видимых при текущих фильтрах, поиске и сортировке
+      const excelData = viewRows.map(row => ({
         'ФИО': row.ФИО,
         'Разница': row.Разница,
         'Статус': row.Статус as string
@@ -211,7 +307,7 @@ const CompareTables = () => {
       // Добавляем итоговую строку
       excelData.push({
         'ФИО': 'Итоговая сумма разницы:',
-        'Разница': parseFloat(sumDifferences(visibleRows)),
+        'Разница': parseFloat(sumDifferences(viewRows)),
         'Статус': ''
       });
 
@@ -240,6 +336,13 @@ const CompareTables = () => {
   };
 
   const canCompare = registryText.trim() !== '' && fullReportText.trim() !== '';
+
+  // Сколько строк во вставленных данных: показываем, пока поля ввода свёрнуты
+  const inputLines = useMemo(() => {
+    if (inputsOpen) return null;
+    const count = (text: string) => (text.trim() === '' ? 0 : text.trim().split('\n').length);
+    return { registry: count(registryText), report: count(fullReportText) };
+  }, [inputsOpen, registryText, fullReportText]);
   const total = differences.length;
   const selectOnClick = (e: React.MouseEvent<HTMLInputElement>) => e.currentTarget.select();
 
@@ -268,8 +371,8 @@ const CompareTables = () => {
           <button
             className="btn"
             onClick={exportToExcel}
-            disabled={differences.length === 0}
-            title="Сохранить результаты в Excel файл"
+            disabled={viewRows.length === 0}
+            title="Сохранить показанные в таблице строки в Excel файл"
           >
             <span className="sq lime" />Экспорт в Excel
           </button>
@@ -311,56 +414,76 @@ const CompareTables = () => {
           </nav>
 
           <main className="content">
-            {error ? (
+            {error && (
               <div className="note error" role="alert">
                 <span className="sq" />
                 <div>{error}</div>
               </div>
-            ) : (
+            )}
+            {storageWarning && (
+              <div className="note" role="status">
+                <span className="sq" />
+                <div>{STORAGE_WARNING}</div>
+              </div>
+            )}
+            {inputLines && (
               <div className="note">
                 <span className="sq" />
                 <div>
-                  Данные вставляются из буфера обмена. Разделитель колонок — табуляция.
-                  {variant.sumsDuplicates(isVersionTwo) && ' При совпадении ФИО в реестре суммы складываются.'}
+                  Поля ввода свёрнуты. {variant.registryTitle}: {inputLines.registry} строк, Полный свод: {inputLines.report} строк.
+                  Нажмите «Показать ввод», чтобы изменить данные.
                 </div>
               </div>
             )}
+            {inputsOpen && (
+              <>
+                {!error && !storageWarning && (
+                  <div className="note">
+                    <span className="sq" />
+                    <div>
+                      Данные вставляются из буфера обмена. Разделитель колонок — табуляция.
+                      {variant.sumsDuplicates(isVersionTwo) && ' При совпадении ФИО в реестре суммы складываются.'}
+                    </div>
+                  </div>
+                )}
 
-            <div className="panels">
-              <section className="panel" aria-labelledby="registry-title">
-                <div className="panel-head">
-                  <b id="registry-title">{variant.registryTitle}</b>
-                  <button className="btn small" onClick={clearRegistry} title={variant.clearRegistryTitle}>Очистить</button>
-                </div>
-                <div className="panel-body">
-                  <textarea
-                    rows={8}
-                    aria-labelledby="registry-title"
-                    placeholder={variant.registryPlaceholder(isVersionTwo)}
-                    value={registryText}
-                    onChange={(e) => { setRegistryText(e.target.value); touch(); }}
-                  />
-                  <div className="hint">Формат: {variant.registryFormat(isVersionTwo)}</div>
-                </div>
-              </section>
+                <div className="panels">
+                  <section className="panel" aria-labelledby="registry-title">
+                    <div className="panel-head">
+                      <b id="registry-title">{variant.registryTitle}</b>
+                      <button className="btn small" onClick={clearRegistry} title={variant.clearRegistryTitle}>Очистить</button>
+                    </div>
+                    <div className="panel-body">
+                      <textarea
+                        rows={6}
+                        aria-labelledby="registry-title"
+                        placeholder={variant.registryPlaceholder(isVersionTwo)}
+                        value={registryText}
+                        onChange={(e) => { setRegistryText(e.target.value); touch(); }}
+                      />
+                      <div className="hint">Формат: {variant.registryFormat(isVersionTwo)}</div>
+                    </div>
+                  </section>
 
-              <section className="panel" aria-labelledby="report-title">
-                <div className="panel-head">
-                  <b id="report-title">Полный свод</b>
-                  <button className="btn small" onClick={clearFullReport}>Очистить</button>
+                  <section className="panel" aria-labelledby="report-title">
+                    <div className="panel-head">
+                      <b id="report-title">Полный свод</b>
+                      <button className="btn small" onClick={clearFullReport}>Очистить</button>
+                    </div>
+                    <div className="panel-body">
+                      <textarea
+                        rows={6}
+                        aria-labelledby="report-title"
+                        placeholder="Вставьте текст Полного свода (ФИО[Tab]Сумма)"
+                        value={fullReportText}
+                        onChange={(e) => { setFullReportText(e.target.value); touch(); }}
+                      />
+                      <div className="hint">Формат: ФИО [Tab] Сумма</div>
+                    </div>
+                  </section>
                 </div>
-                <div className="panel-body">
-                  <textarea
-                    rows={8}
-                    aria-labelledby="report-title"
-                    placeholder="Вставьте текст Полного свода (ФИО[Tab]Сумма)"
-                    value={fullReportText}
-                    onChange={(e) => { setFullReportText(e.target.value); touch(); }}
-                  />
-                  <div className="hint">Формат: ФИО [Tab] Сумма</div>
-                </div>
-              </section>
-            </div>
+              </>
+            )}
 
             <div className="progress">
               <span className="progress-label">Сравнение:</span>
@@ -385,80 +508,124 @@ const CompareTables = () => {
               </div>
             </div>
 
-            <div className="results-head">
-              <b>Результат сравнения</b>
-              <div className="spacer" />
-              <button
-                className="btn small"
-                aria-pressed={filterMatches}
-                onClick={() => setFilterMatches(!filterMatches)}
-              >
-                <span className={`sq${filterMatches ? ' checked' : ''}`} />
-                {filterMatches ? 'Показать совпадения' : 'Скрыть совпадения'}
-              </button>
-              <button
-                className="btn small"
-                aria-pressed={filterTerminated}
-                onClick={() => setFilterTerminated(!filterTerminated)}
-              >
-                <span className={`sq${filterTerminated ? ' checked' : ''}`} />
-                {filterTerminated ? 'Показать' : 'Скрыть'} {variant.missingNoun}
-              </button>
-            </div>
+            <section className="results" aria-label="Результат сравнения">
+              <div className="results-head">
+                <b>Результат сравнения</b>
+                <span className="count" aria-live="polite">
+                  {total > 0 ? `показано ${viewRows.length} из ${total}` : ''}
+                </span>
+                <div className="spacer" />
+                <input
+                  type="search"
+                  className="search"
+                  placeholder="Поиск по ФИО"
+                  aria-label="Поиск по ФИО"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <button
+                  className="btn small"
+                  aria-pressed={filterMatches}
+                  onClick={() => setFilterMatches(!filterMatches)}
+                >
+                  <span className={`sq${filterMatches ? ' checked' : ''}`} />
+                  {filterMatches ? 'Показать совпадения' : 'Скрыть совпадения'}
+                </button>
+                <button
+                  className="btn small"
+                  aria-pressed={filterTerminated}
+                  onClick={() => setFilterTerminated(!filterTerminated)}
+                >
+                  <span className={`sq${filterTerminated ? ' checked' : ''}`} />
+                  {filterTerminated ? 'Показать' : 'Скрыть'} {variant.missingNoun}
+                </button>
+                <button
+                  className="btn small"
+                  aria-expanded={inputsOpen}
+                  onClick={() => setInputsOpen(!inputsOpen)}
+                  title="Скрыть или показать поля ввода, чтобы таблице хватило места"
+                >
+                  <span className={`sq${inputsOpen ? '' : ' checked'}`} />
+                  {inputsOpen ? 'Свернуть ввод' : 'Показать ввод'}
+                </button>
+              </div>
 
-            <div className="table-wrap">
-              <table className="grid">
-                <colgroup>
-                  <col />
-                  <col className="c-num" />
-                  <col className="c-status" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>ФИО</th>
-                    <th className="num">Разница</th>
-                    <th>Статус</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleRows.length === 0 && (
-                    <tr className="empty-row">
-                      <td colSpan={3}>
-                        {total === 0
-                          ? 'Нет данных. Вставьте данные в оба поля и нажмите «Сравнить данные».'
-                          : 'Все записи скрыты фильтрами.'}
-                      </td>
+              <div
+                className="table-wrap"
+                ref={scrollerRef}
+                onScroll={(e) => setFirstRow(Math.floor(e.currentTarget.scrollTop / ROW_HEIGHT))}
+              >
+                <table className="grid">
+                  <colgroup>
+                    <col />
+                    <col className="c-num" />
+                    <col className="c-status" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      {SORTABLE.map(({ key, label, className }) => (
+                        <th
+                          key={key}
+                          className={className}
+                          aria-sort={sort?.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        >
+                          <button className="th-btn" onClick={() => setSort(nextSort(sort, key))} title="Сортировать">
+                            {label}
+                            <span className="sort-mark" aria-hidden="true">
+                              {sort?.key === key ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
+                            </span>
+                          </button>
+                        </th>
+                      ))}
                     </tr>
-                  )}
-                  {visibleRows.map((row, index) => {
-                    const tone = statusTone(row.Статус);
-                    return (
-                      <tr key={index} className={`row-${tone}`}>
-                        <td>
-                          <input type="text" className="cell" value={row.ФИО} readOnly aria-label="ФИО" onClick={selectOnClick} />
+                  </thead>
+                  <tbody>
+                    {viewRows.length === 0 && (
+                      <tr className="empty-row">
+                        <td colSpan={3}>
+                          {total === 0
+                            ? 'Нет данных. Вставьте данные в оба поля и нажмите «Сравнить данные».'
+                            : 'Ничего не найдено: измените поиск или фильтры.'}
                         </td>
-                        <td>
-                          <input type="text" className="cell num" value={formatAmount(row.Разница)} readOnly aria-label="Разница" onClick={selectOnClick} />
-                        </td>
-                        <td className={`status tone-${tone}`}>{row.Статус}</td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-                {total > 0 && (
-                  <tfoot>
-                    <tr>
-                      <td><b>Всего записей:</b></td>
-                      <td colSpan={2}>{visibleRows.length}</td>
-                    </tr>
-                    <tr>
-                      <td><b>Итоговая сумма разницы:</b></td>
-                      <td colSpan={2}><b>{formatAmount(parseFloat(sumDifferences(visibleRows)))}</b></td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
+                    )}
+                    {spaceBefore > 0 && (
+                      <tr className="space-row" aria-hidden="true"><td colSpan={3} style={{ height: spaceBefore }} /></tr>
+                    )}
+                    {shownRows.map((row, i) => {
+                      const tone = statusTone(row.Статус);
+                      return (
+                        <tr key={rangeStart + i} className={`row-${tone}`}>
+                          <td>
+                            <input type="text" className="cell" value={row.ФИО} readOnly aria-label="ФИО" onClick={selectOnClick} />
+                          </td>
+                          <td>
+                            <input type="text" className="cell num" value={formatAmount(row.Разница)} readOnly aria-label="Разница" onClick={selectOnClick} />
+                          </td>
+                          <td className={`status tone-${tone}`}>{row.Статус}</td>
+                        </tr>
+                      );
+                    })}
+                    {spaceAfter > 0 && (
+                      <tr className="space-row" aria-hidden="true"><td colSpan={3} style={{ height: spaceAfter }} /></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {total > 0 && (
+                <div className="totals">
+                  <div className="totals-row info">
+                    <b>Всего записей:</b>
+                    <span>{viewRows.length}</span>
+                  </div>
+                  <div className="totals-row sum">
+                    <b>Итоговая сумма разницы:</b>
+                    <b>{formatAmount(parseFloat(sumDifferences(viewRows)))}</b>
+                  </div>
+                </div>
+              )}
+            </section>
           </main>
         </div>
 
