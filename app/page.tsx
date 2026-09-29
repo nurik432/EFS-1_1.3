@@ -8,6 +8,7 @@ import { formatAmount, formatDateTime, formatElapsed, formatTime } from '../lib/
 import { nextSort, searchRows, sortRows } from '../lib/view';
 import type { Sort, SortKey } from '../lib/view';
 import { statusTone, variant } from './variant';
+import LegacyPage from './LegacyPage';
 
 interface Submitted {
   registryText: string;
@@ -59,7 +60,7 @@ const SORTABLE: { key: SortKey; label: string; className?: string }[] = [
   { key: 'Статус', label: 'Статус' },
 ];
 
-const CompareTables = () => {
+const CompareTables = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
   const [registryText, setRegistryText] = useState<string>('');
   const [fullReportText, setFullReportText] = useState<string>('');
   const [actionError, setActionError] = useState<string>('');
@@ -388,6 +389,9 @@ const CompareTables = () => {
             <span className="sq blue" />Новая сессия
           </button>
           <div className="tb-sep" />
+          <button className="btn" onClick={onSwitchDesign} title="Вернуться к прежнему оформлению">
+            <span className="sq" />Старый дизайн
+          </button>
           <button
             className="btn pressed"
             onClick={handleVersionChange}
@@ -641,4 +645,34 @@ const CompareTables = () => {
   );
 };
 
-export default CompareTables;
+const DESIGN_KEY = 'design';
+
+const Page = () => {
+  const [legacy, setLegacy] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    try {
+      setLegacy(localStorage.getItem(DESIGN_KEY) === 'legacy');
+    } catch {
+      setLegacy(false);
+    }
+  }, []);
+
+  const setDesign = (isLegacy: boolean) => {
+    setLegacy(isLegacy);
+    try {
+      localStorage.setItem(DESIGN_KEY, isLegacy ? 'legacy' : 'new');
+    } catch {
+      // хранилище недоступно — выбор действует до перезагрузки
+    }
+  };
+
+  if (legacy === null) return null;
+  return legacy ? (
+    <LegacyPage onSwitchDesign={() => setDesign(false)} />
+  ) : (
+    <CompareTables onSwitchDesign={() => setDesign(true)} />
+  );
+};
+
+export default Page;

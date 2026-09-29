@@ -108,4 +108,10 @@ describe('filterRows и sumDifferences', () => {
     expect(sumDifferences(rows)).toBe('1.00');
     expect(sumDifferences(filterRows(rows, { hideMatches: true, hideMissing: true }))).toBe('2.00');
   });
+
+  it('версия 2: в полном своде сумма берётся из 8-й колонки, а не из 2-й', () => {
+    const registry = 'Иванов\t\t\t\t\t\t\t100';
+    const report = 'Иванов\t999\t\t\t\t\t\t100';
+    expect(compareData(registry, report, true)).toEqual([{ ФИО: 'Иванов', Разница: 0, Статус: 'Совпадает' }]);
+  });
 });
