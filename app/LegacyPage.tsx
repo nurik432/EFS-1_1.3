@@ -21,7 +21,7 @@ const LegacyPage = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
   const [filterMatches, setFilterMatches] = useState<boolean>(false);
   const [filterTerminated, setFilterTerminated] = useState<boolean>(false);
   const [sessionId, setSessionId] = useState<string>('');
-  const [isVersionTwo, setIsVersionTwo] = useState<boolean>(false); // false = версия 1 (9 колонок реестра), true = версия 2 (сумма в 8-й колонке)
+  const [isVersionTwo, setIsVersionTwo] = useState<boolean>(false); // false = версия 1 (9 колонок реестра), true = версия 2 (сумма во 2-й колонке)
   // Снимок данных на момент нажатия «Сравнить данные»; результат считается из него
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
 
@@ -260,12 +260,12 @@ const LegacyPage = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
             <textarea
               className="form-control"
               rows={6}
-              placeholder={`Вставьте текст Реестра (${isVersionTwo ? 'ФИО[Tab]...[Tab]Сумма (всего от 8 колонок, ФИО - 1-я, Сумма - 8-я)' : 'ФИО[Tab]...[Tab]Сумма (всего 9 колонок, ФИО - 1-я, Сумма - 9-я)'})`}
+              placeholder={`Вставьте текст Реестра (${isVersionTwo ? 'ФИО[Tab]...[Tab]Сумма (всего от 2 колонок, ФИО - 1-я, Сумма - 2-я)' : 'ФИО[Tab]...[Tab]Сумма (всего 9 колонок, ФИО - 1-я, Сумма - 9-я)'})`}
               value={registryText}
               onChange={(e) => setRegistryText(e.target.value)}
             />
             <small className="form-text text-muted">
-              Формат: {isVersionTwo ? 'Для версии 2: ФИО - 1-я колонка, Сумма - 8-я колонка. Минимум 8 колонок.' : 'Для версии 1: ФИО - 1-я колонка, Сумма - 9-я колонка. Всего 9 колонок.'}
+              Формат: {isVersionTwo ? 'Для версии 2: ФИО - 1-я колонка, Сумма - 2-я колонка. Минимум 2 колонки.' : 'Для версии 1: ФИО - 1-я колонка, Сумма - 9-я колонка. Всего 9 колонок.'}
             </small>
           </div>
         </div>
