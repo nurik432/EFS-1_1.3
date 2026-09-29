@@ -297,7 +297,7 @@ const LegacyPage = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
 
       <div className="mb-4 d-flex flex-wrap">
         <button
-          className="btn btn-primary me-2 mb-2"
+          className="btn btn-outline-primary me-2 mb-2"
           onClick={runCompare}
           disabled={!registryText.trim() || !fullReportText.trim()}
         >
@@ -321,7 +321,7 @@ const LegacyPage = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
 
         {/* Новая кнопка для экспорта в Excel */}
         <button
-          className="btn btn-success mb-2"
+          className="btn btn-outline-success mb-2"
           onClick={exportToExcel}
           disabled={differences.length === 0}
           title="Сохранить результаты в Excel файл"
@@ -333,13 +333,13 @@ const LegacyPage = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
 
       <div className="mb-4">
         <button
-          className="btn btn-secondary me-2 mb-2"
+          className="btn btn-outline-secondary me-2 mb-2"
           onClick={() => setFilterMatches(!filterMatches)}
         >
           {filterMatches ? 'Показать совпадения' : 'Скрыть совпадения'}
         </button>
         <button
-          className="btn btn-danger mb-2"
+          className="btn btn-outline-danger mb-2"
           onClick={() => setFilterTerminated(!filterTerminated)}
         >
           {filterTerminated ? 'Показать отсутствующие' : 'Скрыть отсутствующие'}

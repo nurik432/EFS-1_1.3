@@ -83,21 +83,20 @@ export const parseRegistryText = (text: string, isVersionTwo: boolean): DataRow[
 };
 
 // Версия 1: ровно 2 колонки (ФИО, Сумма).
-// Версия 2 (проверка дохода): сумма берётся из 8-й колонки; строка из 2 колонок тоже допустима
+// Версия 2 (проверка дохода): в своде может быть больше колонок, ФИО — 1-я, доход — 2-я
 export const parseFullReportText = (text: string, isVersionTwo = false): DataRow[] =>
   nonEmptyLines(text).map(({ line, number }) => {
     const parts = line.split('\t').map((part) => part.trim());
-    const sumIndex = isVersionTwo && parts.length >= 8 ? 7 : 1;
-    if (parts.length < 2 || (parts.length !== 2 && !(isVersionTwo && parts.length >= 8))) {
+    if (isVersionTwo ? parts.length < 2 : parts.length !== 2) {
       throw new Error(
-        isVersionTwo
-          ? `Ошибка в строке ${number} полного свода: неверный формат данных. Ожидается 2 колонки или минимум 8 (сумма — в 8-й).`
-          : `Ошибка в строке ${number} полного свода: неверный формат данных. Ожидаются 2 колонки.`,
+        `Ошибка в строке ${number} полного свода: неверный формат данных. ${
+          isVersionTwo ? 'Ожидается минимум 2 колонки (ФИО, Сумма).' : 'Ожидаются 2 колонки.'
+        }`,
       );
     }
     return {
       ФИО: cleanFIO(parts[0]),
-      СУММА: parseSum(parts[sumIndex], `строке ${number} полного свода`),
+      СУММА: parseSum(parts[1], `строке ${number} полного свода`),
     };
   });
 
