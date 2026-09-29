@@ -54,13 +54,13 @@ export const parseRegistryText = (text: string, isVersionTwo: boolean): DataRow[
         СУММА: parseSum(parts[8].trim(), `строке ${number} реестра`),
       };
     }
-    // Версия 2: минимум 8 колонок, ФИО — 1-я, Сумма — 8-я
-    if (parts.length < 8) {
-      throw new Error(`Ошибка в строке ${number} реестра: неверный формат данных для версии 2. Ожидается минимум 8 колонок.`);
+    // Версия 2: минимум 2 колонки, ФИО — 1-я, Сумма (доход) — 2-я
+    if (parts.length < 2) {
+      throw new Error(`Ошибка в строке ${number} реестра: неверный формат данных для версии 2. Ожидается минимум 2 колонки.`);
     }
     return {
       ФИО: cleanFIO(parts[0]),
-      СУММА: parseSum(parts[7].trim(), `строке ${number} реестра`),
+      СУММА: parseSum(parts[1].trim(), `строке ${number} реестра`),
     };
   });
 

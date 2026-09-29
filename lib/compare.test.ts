@@ -9,7 +9,7 @@ import {
 } from './compare';
 
 const v1Row = (fio: string, sum: string) => [fio, '', '', '', '', '', '', '', sum].join('\t');
-const v2Row = (fio: string, sum: string) => [fio, '', '', '', '', '', '', sum].join('\t');
+const v2Row = (fio: string, sum: string) => [fio, sum, 'прочее'].join('\t');
 
 describe('parseSum', () => {
   it('понимает пробелы-разделители и десятичную запятую', () => {
@@ -36,7 +36,7 @@ describe('parseRegistryText', () => {
     expect(() => parseRegistryText('a\tb', false)).toThrow('строке 1');
   });
 
-  it('версия 2: сумма в 8-й колонке, дубли ФИО складываются', () => {
+  it('версия 2: сумма во 2-й колонке, дубли ФИО складываются', () => {
     const text = [v2Row('Иванов И И', '10'), v2Row('иванов  и и', '5')].join('\n');
     const rows = parseRegistryText(text, true);
     expect(rows).toHaveLength(1);
@@ -109,8 +109,8 @@ describe('filterRows и sumDifferences', () => {
     expect(sumDifferences(filterRows(rows, { hideMatches: true, hideMissing: true }))).toBe('2.00');
   });
 
-  it('версия 2: реестр — сумма из 8-й колонки, свод — из 2-й (колонок может быть больше)', () => {
-    const registry = 'Иванов\t\t\t\t\t\t\t100';
+  it('версия 2: и в реестре, и в своде сумма из 2-й колонки (колонок может быть больше)', () => {
+    const registry = 'Иванов\t100\tпрочее';
     const report = 'Иванов\t100\tпрочее\t999';
     expect(compareData(registry, report, true)).toEqual([{ ФИО: 'Иванов', Разница: 0, Статус: 'Совпадает' }]);
   });
