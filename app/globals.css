@@ -171,7 +171,7 @@ textarea:focus-visible {
   margin: 0 5px;
 }
 
-.btn {
+.win .btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -186,22 +186,22 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.btn:hover:not(:disabled) {
+.win .btn:hover:not(:disabled) {
   background: linear-gradient(#ffffff, #f0eddf);
   border-color: #6d6a58;
 }
 
-.btn:disabled {
+.win .btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.btn.small {
+.win .btn.small {
   padding: 2px 8px;
   font-size: 12px;
 }
 
-.btn.pressed {
+.win .btn.pressed {
   background: linear-gradient(#e6e2d0, #d2cdb8);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
 }

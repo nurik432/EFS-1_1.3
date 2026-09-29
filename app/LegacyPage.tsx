@@ -221,7 +221,7 @@ const LegacyPage = ({ onSwitchDesign }: { onSwitchDesign: () => void }) => {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#fff', color: '#212529' }}>
+    <div style={{ minHeight: '100vh', background: '#fff', color: '#212529', fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}>
     <div className="container py-4">
       <div className="d-flex justify-content-between align-items-start mb-4">
         <h1 className="mb-0">{variant.windowTitle}</h1>
